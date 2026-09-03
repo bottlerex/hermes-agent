@@ -10876,6 +10876,33 @@ def _default_spawn(
         # the classic mis-set that stalls a board).
         if task.provider_override:
             cmd.extend(["--provider", task.provider_override])
+    else:
+        # No explicit pin on this task: ask the policy-only dispatch router
+        # for a runtime-only model/provider suggestion, derived solely from
+        # this spawn's own workspace_kind. This decision is NOT persisted —
+        # it is recomputed on every spawn and never written back to the task
+        # row or the DB schema. Any failure (missing module, unexpected
+        # exception) fails closed to the pre-existing behavior: no -m/
+        # --provider flag at all, identical to a Hermes build that predates
+        # dispatch_routing.
+        try:
+            from hermes_cli.dispatch_routing import (
+                derive_routing_metadata,
+                route_task_model,
+            )
+
+            _routing_metadata = derive_routing_metadata(
+                workspace_kind=task.workspace_kind,
+                model_override=task.model_override,
+                provider_override=task.provider_override,
+            )
+            _decision = route_task_model(_routing_metadata)
+        except Exception:
+            _decision = None
+        if _decision is not None and _decision.routed and _decision.selected_model:
+            cmd.extend(["-m", _decision.selected_model])
+            if _decision.selected_provider:
+                cmd.extend(["--provider", _decision.selected_provider])
     # Per-task thinking depth. Independent of the model override — a task can
     # run the profile's own model at a different depth — so this is its own
     # branch, not a nested one.
